@@ -433,6 +433,15 @@ dependencies:
       namespace: kuadrant-system
       # -- (optional) Version to pin operator to (e.g., "v0.8.0"). If omitted, installs latest from channel.
       # version: v0.8.0
+      # -- OLM Subscription config injected into the operator container (replaces CSV patching)
+      config:
+        env:
+        - name: ISTIO_GATEWAY_CONTROLLER_NAMES
+          value: "istio.io/gateway-controller,openshift.io/gateway-controller/v1"
+        - name: RATELIMIT_CHECK_SERVICE_FAILURE_MODE
+          value: "deny"
+        - name: RATELIMIT_REPORT_SERVICE_FAILURE_MODE
+          value: "deny"
     config:
       # -- Enable Authorino TLS configuration
       tlsEnabled: false

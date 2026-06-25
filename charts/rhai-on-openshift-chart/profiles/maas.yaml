@@ -1,0 +1,11 @@
+# MaaS profile - KServe + Models as a Service
+# Enables KServe with modelsAsService for MaaS-focused deployments.
+# Dependencies auto-installed: cert-manager, leader-worker-set, RHCL/Kuadrant
+components:
+  kserve:
+    dependencies:
+      jobSet: false
+    dsc:
+      managementState: Managed
+      modelsAsService:
+        managementState: Managed

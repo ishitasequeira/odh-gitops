@@ -61,7 +61,8 @@ spec:
       managementState: Removed
     kserve:
       managementState: Managed
-      modelsAsService: {}
+      modelsAsService:
+        managementState: Managed
       nim: {}
       rawDeploymentServiceConfig: Headless
       wva: {}
@@ -204,8 +205,8 @@ spec:
   sourceNamespace: openshift-marketplace
   config:
     env:
-    - name: RELATED_IMAGE_WASMSHIM
-      value: image-value
+    - name: ISTIO_GATEWAY_CONTROLLER_NAMES
+      value: istio.io/gateway-controller,openshift.io/gateway-controller/v1
     - name: RATELIMIT_CHECK_SERVICE_FAILURE_MODE
       value: deny
     - name: RATELIMIT_REPORT_SERVICE_FAILURE_MODE
