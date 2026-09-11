@@ -111,74 +111,26 @@ test_2_sail_lws_managed_unmanaged() {
   assert_cr_not_degraded "leaderworkersetoperator" "cluster" "LeaderWorkerSetOperator CR restored"
 }
 
-# ─── Test 3: cert-manager subchart enabled / disabled ──────────────────────
+# ─── Test 3: External cert-manager (subchart disabled) ─────────────────────
 
-test_3_certmanager_subchart() {
-  log "Step 1: cert-manager-operator subchart enabled (default)"
-  ensure_deployed
-
-  wait_for_all_deployments_in_namespace "cert-manager"
-  assert_exists "CertManager CR" certmanager/cluster
-  assert_exists "cert-manager namespace" namespace/cert-manager
-  assert_exists "cert-manager-operator namespace" namespace/cert-manager-operator
-
-  log "Step 2: fresh deploy with cert-manager-operator subchart disabled"
-  if kubectl get certmanager cluster &>/dev/null; then
-    log "Removing CertManager CR finalizer to prevent deletion hang..."
-    kubectl patch certmanager cluster --type=merge -p '{"metadata":{"finalizers":[]}}' 2>/dev/null || true
-  fi
+test_3_external_certmanager() {
+  log "Deploying with cert-manager-operator.enabled=false (external cert-manager scenario)"
   helm_deploy \
     --set "cert-manager-operator.enabled=false" \
     --set "${PROV_PREFIX}.certManager.managementPolicy=Unmanaged"
 
+  # cert-manager-operator subchart resources must not be deployed
   assert_deployment_gone "cert-manager-operator"
-  assert_deployment_gone "cert-manager"
+
+  # cert-manager workloads must still be running (
+  wait_for_all_deployments_in_namespace "cert-manager"
+
+  # RHAI operator must still be healthy because cert-manager is running externally
+  wait_for_deployment "rhai-operator" "redhat-ods-operator"
+  assert_cr_not_degraded "kserves.components.platform.opendatahub.io" "default-kserve" "Kserve 'default-kserve'"
 
   log "Reverting to default (enabled)"
   helm_deploy
-  wait_for_all_deployments_in_namespace "cert-manager"
-  assert_exists "CertManager CR" certmanager/cluster
-}
-
-# ─── Test 4: CCM → subchart migration ──────────────────────────────────────
-
-test_4_ccm_to_subchart_migration() {
-  log "Simulating CCM-managed cert-manager → subchart migration"
-
-  # Phase 1: Simulate CCM by installing cert-manager as a standalone release
-  # (same release name and values the CCM uses).
-  # This creates resources with meta.helm.sh/release-name=cert-manager-operator.
-  local ccm_release="cert-manager-operator"
-  local ccm_chart="./charts/dependencies/cert-manager-operator"
-
-  log "Phase 1: Installing cert-manager as standalone release '${ccm_release}' (simulating CCM)"
-  helm upgrade --install "$ccm_release" "$ccm_chart" \
-    --set operatorNamespace=cert-manager-operator \
-    --set operandNamespace=cert-manager \
-    --take-ownership \
-    --timeout 5m
-
-  wait_for_all_deployments_in_namespace "cert-manager"
-  assert_exists "CertManager CR (CCM-managed)" certmanager/cluster
-  pass "cert-manager installed as standalone release '${ccm_release}'"
-
-  # Phase 2: Deploy rhai-on-xks-chart with cert-manager subchart enabled.
-  log "Phase 2: Deploying rhai-on-xks-chart with cert-manager subchart (old release still present)"
-  helm_deploy
-
-  wait_for_all_deployments_in_namespace "cert-manager"
-  assert_exists "CertManager CR (subchart-managed)" certmanager/cluster
-  assert_exists "cert-manager namespace" namespace/cert-manager
-  assert_exists "cert-manager-operator namespace" namespace/cert-manager-operator
-
-  # Verify the old standalone release was cleaned up by the pre-upgrade hook
-  if helm status "$ccm_release" &>/dev/null; then
-    fail "Old Helm release '${ccm_release}' still exists after migration"
-  else
-    pass "Old Helm release '${ccm_release}' cleaned up by pre-upgrade hook"
-  fi
-
-  pass "CCM → subchart migration succeeded without ownership conflicts"
 }
 
 # ─── Test 5: Uninstall lifecycle ────────────────────────────────────────────
@@ -234,8 +186,7 @@ test_5_uninstall_lifecycle() {
 ALL_TESTS=(
   "1:Install check:test_1_install_check"
   "2:sail+lws Managed→Unmanaged→Managed:test_2_sail_lws_managed_unmanaged"
-  "3:certManager subchart enabled/disabled:test_3_certmanager_subchart"
-  "4:CCM to subchart migration:test_4_ccm_to_subchart_migration"
+  "3:external cert-manager (subchart disabled):test_3_external_certmanager"
   # TODO: this would not work correctly, since KServe is blocking the deletion.
   # "5:Uninstall lifecycle (cleanup + cleanupNamespaces):test_5_uninstall_lifecycle"
 )

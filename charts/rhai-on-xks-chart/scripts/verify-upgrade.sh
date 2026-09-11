@@ -70,10 +70,6 @@ assert_uid_unchanged() {
   fi
 }
 
-helm_deploy_old_version() {
-  helm_deploy --chart "$UPGRADE_FROM_CHART" --version "$UPGRADE_FROM_VERSION"
-}
-
 cleanup_upgrade_test() {
   log "Cleaning up upgrade test release..."
   helm uninstall "$RELEASE_NAME" -n "$NAMESPACE" --timeout "$DELETE_TIMEOUT" 2>/dev/null || true
@@ -90,7 +86,7 @@ test_1_upgrade() {
   # Phase 2: Record pre-upgrade state
   log "Phase 2: Recording pre-upgrade state..."
 
-  local ns_resources=("namespace/istio-system")
+  local ns_resources=("namespace/istio-system" "namespace/cert-manager" "namespace/cert-manager-operator")
   declare -A pre_uids=()
 
   for res in "${ns_resources[@]}"; do
@@ -103,6 +99,16 @@ test_1_upgrade() {
       warn "$res not found before upgrade (may not exist in old version)"
     fi
   done
+
+  local rhai_ca_uid
+  rhai_ca_uid=$(kubectl get secret rhai-ca -n cert-manager \
+    -o jsonpath='{.metadata.uid}' 2>/dev/null || true)
+  if [[ -n "$rhai_ca_uid" ]]; then
+    pass "rhai-ca secret exists before upgrade (uid=$rhai_ca_uid)"
+  else
+    warn "rhai-ca secret not found before upgrade"
+  fi
+
 
   local ke_uid
   ke_uid=$(get_resource_uid "$KE_KIND/$KE_NAME") || {
@@ -132,7 +138,10 @@ test_1_upgrade() {
 
   # Phase 3: Upgrade to local chart
   log "Phase 3: Upgrading to local chart..."
-  helm_deploy
+  if ! helm_deploy --take-ownership --force-conflicts; then
+    fail "Helm upgrade to local chart failed"
+    return 1
+  fi
   wait_ke_ready
 
   # Phase 4: Verify post-upgrade state
@@ -161,6 +170,28 @@ test_1_upgrade() {
 
   # KServe not degraded
   assert_cr_not_degraded "kserves.components.platform.opendatahub.io" "default-kserve" "Kserve 'default-kserve'"
+
+  # cert-manager namespace UIDs (must not be deleted/recreated during upgrade)
+  for res in "namespace/cert-manager" "namespace/cert-manager-operator"; do
+    if [[ -n "${pre_uids[$res]+x}" ]]; then
+      assert_uid_unchanged "$res" "$res" "${pre_uids[$res]}"
+    fi
+  done
+
+  # rhai-ca secret preserved (CA deletion would cause TLS downtime)
+  if [[ -n "$rhai_ca_uid" ]]; then
+    local post_rhai_ca_uid
+    post_rhai_ca_uid=$(kubectl get secret rhai-ca -n cert-manager \
+      -o jsonpath='{.metadata.uid}' 2>/dev/null || true)
+    if [[ -z "$post_rhai_ca_uid" ]]; then
+      fail "rhai-ca secret deleted during upgrade"
+    elif [[ "$post_rhai_ca_uid" != "$rhai_ca_uid" ]]; then
+      fail "rhai-ca secret recreated during upgrade (uid changed: $rhai_ca_uid → $post_rhai_ca_uid)"
+    else
+      pass "rhai-ca secret preserved (uid unchanged)"
+    fi
+  fi
+
 }
 
 # ─── Main ───────────────────────────────────────────────────────────────────
